@@ -4,6 +4,9 @@
 
 - main.py
 - data_utils.py
+  - defines the dataset
+  - first time, should call `dataset.build()` function, that will take a while and store the data into numpy array
+  - after, should call `dataset.load()` function for quick data loading
 - trainer.py 
 - model_conv1d.py
 - model_lstm.py
@@ -15,12 +18,19 @@
 * Pyworld vocoder is used to extract feature 
 * the spectrum is first normalized to the log scale, then further normalized to be within the range of [-1, 1], see in `data_utils.py`
 
-#### Model
+#### Model 
+
+Architecture
 
 * [ ] conv 1d 
 * [ ] conv 2d, max pooling over time 
 * [ ] LSTM 
 * [ ] WaveNet
+
+Paradigm
+* [ ] Sequence to sequence
+* [ ] Variational Inference 
+* [ ] Adversarial Learning
 
 #### Trainer 
 

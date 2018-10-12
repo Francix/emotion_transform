@@ -11,6 +11,7 @@ import json
 def main():
   config = json.load(open("config.json"))
   dset = Dataset(config)
+  dset.build()
   return 
 
 if __name__ == "__main__":

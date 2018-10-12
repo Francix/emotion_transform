@@ -1,5 +1,7 @@
 {
   "file_path": "/Users/Francis_Yao/Documents/Columbia/EmotionalSpeech/EPSaT/wav", 
   "data_path": "/Users/Francis_Yao/Documents/Columbia/EmotionalSpeech/data_array", 
-  "max_len": 400
+  "batch_size": 64, 
+  "max_len": 400, 
+  "max_epoch": 40
 }

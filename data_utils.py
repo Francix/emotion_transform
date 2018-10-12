@@ -11,39 +11,207 @@ import pyworld as pw
 import os
 import matplotlib.pyplot as plt
 import tqdm
+import random
+import pickle
+import json
+import time
 
 FFT_SIZE = 1024
 FS = 16000
 F0_CEIL = 500
 EPSILON = 1e-10
 
+DEBUG = True
+
 class Dataset(object):
   """The dataset class"""
 
   def __init__(self, config):
     self.file_path = config["file_path"]
+    self.data_path = config["data_path"]
+    self.max_len = config["max_len"]
+    self.batch_size = config["batch_size"]
+
+    self.speaker2id = None
+    self.id2speaker = None
+    self.emotion2id = None
+    self.id2emotion = None
+    self.speaker_f0_stats = None
+    self.normalizer = None
+
+    self.num_batches = {"train": 0, "test": 0}
+    self.num_cases = {"train": 0, "test": 0}
+    self.batch_ptr = {"train": 0, "test": 0}
+    self.data = { "train": 
+                    { "speakers": None, 
+                      "emotions": None, 
+                      "f0": None,  
+                      "sp": None, 
+                      "ap": None, 
+                      "en": None,
+                      "lens": None}, 
+                  "test": 
+                    { "speakers": None, 
+                      "emotions": None, 
+                      "f0": None,  
+                      "sp": None, 
+                      "ap": None, 
+                      "en": None, 
+                      "lens": None} }
     return 
 
   def build(self):
     """Build the dataset"""
-    ## load all the data
+    print("Building the dataset ... ")
+    # load all the data
     data = read_data(self.file_path) # TBC
-    (speaker2id, id2speaker, emotion2id, id2emotion, speaker_f0_stats,
-      normalizer) = statistics(data)
-    
+    (self.speaker2id, self.id2speaker, self.emotion2id, self.id2emotion, 
+      self.speaker_f0_stats, self.normalizer) = statistics(data)
+
+    random.shuffle(data)
+    num_data = len(data)
+    num_train = num_data / 9
+    data_train = data[: num_train]
+    data_test = data[num_train: ]
+
+    # data list to numpy array
+    (speakers_train, emotions_train, f0_train, sp_train, ap_train, en_train,
+      lens_train) = build_array(data_train, self.speaker2id, self.emotion2id, 
+      self.max_len, self.normalizer)
+    self.save_data("train", speakers_train, emotions_train, f0_train, 
+      sp_train, ap_train, en_train, lens_train)
+    self.data["train"]["speakers"] = speakers_train
+    self.data["train"]["emotions"] = emotions_train
+    self.data["train"]["f0"] = f0_train
+    self.data["train"]["sp"] = sp_train
+    self.data["train"]["ap"] = ap_train
+    self.data["train"]["en"] = en_train
+    self.data["train"]["lens"] = lens_train
+
+    (speakers_test, emotions_test, f0_test, sp_test, ap_test, en_test,
+      lens_test) = build_array(data_test, self.speaker2id, self.emotion2id, 
+      self.max_len, self.normalizer)
+    self.save_data("test", speakers_test, emotions_test, f0_test, sp_test, 
+      ap_test, en_test, lens_test)
+    self.data["test"]["speakers"] = speakers_test
+    self.data["test"]["emotions"] = emotions_test
+    self.data["test"]["f0"] = f0_test
+    self.data["test"]["sp"] = sp_test
+    self.data["test"]["ap"] = ap_test
+    self.data["test"]["en"] = en_test
+    self.data["test"]["lens"] = lens_test
+
+    self.save_pickle()
+
+    # build batches
+    self.num_cases["train"] = len(self.data["train"]["speakers"])
+    self.num_batches["train"] = \
+      self.num_cases["train"] / self.batch_size
+    if(self.num_cases["train"] % self.batch_size != 0):
+      self.num_batches["train"] += 1
+
+    self.num_cases["test"] = len(self.data["test"]["speakers"])
+    self.num_batches["test"] = \
+      self.num_cases["test"] / self.batch_size
+    if(self.num_cases["test"] % self.batch_size != 0):
+      self.num_batches["test"] += 1
+
+    print("%d batches in train, %d batches in test" % 
+      (self.num_batches["train"], self.num_batches["test"]))
     return 
 
 
-  def save(self):
-    """Save the dataset"""
+  def save_data(self, setname, speakers, emotions, f0, sp, ap, en, lens):
+    """Save the numpy array dataset, the majority of the dataset"""
+    print("saving %s dataset" % setname)
+    data_path = self.data_path
+    np.save(os.path.join(data_path, "speakers_" + setname), speakers)
+    np.save(os.path.join(data_path, "emotions_" + setname), emotions)
+    np.save(os.path.join(data_path, "f0_" + setname), f0)
+    np.save(os.path.join(data_path, "sp_" + setname), sp)
+    np.save(os.path.join(data_path, "ap_" + setname), ap)
+    np.save(os.path.join(data_path, "en_" + setname), en)
+    np.save(os.path.join(data_path, "lens_" + setname), lens)
+    return
+  
+  def save_pickle(self):
+    """Save the stuffs other than numpy array"""
+    print("saving to pickle ... ")
+    data_path = self.data_path
+    obj_list = [self.speaker2id, self.id2speaker, self.emotion2id, 
+      self.id2emotion, self.speaker_f0_stats, self.normalizer]
+    fname_list = ["speaker2id.pkl", "id2speaker.pkl", "emotion2id.pkl", 
+      "id2emotion.pkl", "speaker_f0_stats.pkl", "normalizer.pkl"]
+    for obj, fname in zip(obj_list, fname_list):
+      filepath = os.path.joion(data_path, fname)
+      pickle.dump(obj, open(filepath, "wb"))
     return
 
   def load(self):
     """Load the dataset"""
+    # load the numpy array
+    print("Loading the dataset ...")
+    data_path = self.data_path
+    for setname in ["train", "test"]:
+      speakers = np.load(
+        os.path.join(data_path, "speakers_" + setname + ".npy"))
+      self.data[setname]["speakers"] = speakers
+      emotions = np.load(
+        os.path.join(data_path, "emotions_" + setname + ".npy"))
+      self.data[setname]["emotions"] = emotions
+      f0 = np.load(
+        os.path.join(data_path, "f0_" + setname + ".npy"))
+      self.data[setname]["f0"] = f0
+      sp = np.load(
+        os.path.join(data_path, "sp_" + setname + ".npy"))
+      self.data[setname]["sp"] = sp
+      ap = np.load(
+        os.path.join(data_path, "ap_" + setname + ".npy"))
+      self.data[setname]["ap"] = ap
+      en = np.load(
+        os.path.join(data_path, "en_" + setname + ".npy"))
+      self.data[setname]["en"] = en
+      lens = np.load(
+        os.path.join(data_path, "lens_" + setname + ".npy"))
+      self.data[setname]["lens"] = speakers
+
+    # load other pickle
+    print("Loading the pickle ... s")
+    data_path = self.data_path
+    obj_list = [self.speaker2id, self.id2speaker, self.emotion2id, 
+      self.id2emotion, self.speaker_f0_stats, self.normalizer]
+    fname_list = ["speaker2id.pkl", "id2speaker.pkl", "emotion2id.pkl", 
+      "id2emotion.pkl", "speaker_f0_stats.pkl", "normalizer.pkl"]
+    for obj, fname in zip(obj_list, fname_list):
+      filepath = os.path.joion(data_path, fname)
+      obj = pickle.load(open(filepath, "rb"))
+
+    # build batches
+    self.num_batches["train"] = \
+      len(self.data["train"]["speakers"]) / self.batch_size
+    if(len(self.data["train"]["speakers"]) % self.batch_size != 0):
+      self.num_batches["train"] += 1
+    self.num_batches["test"] = \
+      len(self.data["test"]["speakers"]) / self.batch_size
+    if(len(self.data["test"]["speakers"]) % self.batch_size != 0):
+      self.num_batches["test"] += 1
     return 
 
-  def next_batch(self):
-    return
+  def next_batch(self, setname):
+    """get next batch, update the pointer"""
+    ptr = self.batch_ptr[setname]
+    batch_size = self.batch_size
+    speakers = self.data[setname]["speakers"][ptr: ptr + batch_size]
+    emotions = self.data[setname]["emotions"][ptr: ptr + batch_size]
+    f0 = self.data[setname]["f0"][ptr: ptr + batch_size]
+    sp = self.data[setname]["sp"][ptr: ptr + batch_size]
+    ap = self.data[setname]["ap"][ptr: ptr + batch_size]
+    en = self.data[setname]["en"][ptr: ptr + batch_size]
+    lens = self.data[setname]["lens"][ptr: ptr + batch_size]
+    self.batch_ptr[setname] += batch_size
+    if(self.batch_ptr[setname] > self.num_cases[setname]): 
+      self.batch_ptr[setname] = self.num_cases[setname] - batch_size
+    return speakers, emotions, sp, lens
 
 class Normalizer(object):
   """Normalize the spectrum to [-1, 1] """
@@ -107,6 +275,7 @@ def pw2wavfile():
 
 def read_data(file_path):
   """Read the raw data, extract feature"""
+  print("reading raw file ...")
   wav_files = [f for f in os.listdir(file_path) if f.endswith(".wav")]
   data = []
   for wf in tqdm.tqdm(wav_files):
@@ -117,11 +286,13 @@ def read_data(file_path):
     content = wf_[4].split(".")[0]
     f0, sp, ap, en = wavfile2pw(os.path.join(file_path, wf))
     data.append([speaker, emotion, content, f0, sp, ap, en])
-  print("%d data processed" % len(data))
+  print("%d file processed" % len(data))
   return data
 
 def statistics(data):
   """Feature statistics
+
+  NOTE: all statistics should be implemented in this function
 
   Args:
     data: the dataset as a list of 
@@ -135,6 +306,8 @@ def statistics(data):
     speaker_f0_stats: the mean and deviation of each speaker's f0
     normalizer: the spectrum normalizer 
   """
+  print("data statistics ... ")
+  start_time = time.time()
   speaker2id = dict()
   id2speaker = dict()
   num_speaker = 0
@@ -184,16 +357,76 @@ def statistics(data):
   print("sp threshold shape", sp_005.shape)
   
   # length distribution, we will use it to determine the maximum length
-  plt.hist(length_stat, bins = 20)
-  plt.savefig("length_statistics.png")
+  # plt.hist(length_stat, bins = 20)
+  # plt.savefig("length_statistics.png")
+  print("statistics time consumption: %.2f" % (time.time() - start_time))
   return (speaker2id, id2speaker, emotion2id, id2emotion, speaker_f0_stats,
     normalizer)
 
+def build_array(data, speaker2id, emotion2id, max_len, normalizer):
+  """transform the data to numpy array for quicker io"""
+  print("building numpy array ... ")
+  start_time = time.time()
+  speakers = []
+  emotions = []
+  f0_all = []
+  sp_all = []
+  ap_all = []
+  en_all = []
+  lens_all = []
+
+  for spk, emo, _, f0, sp, ap, en in data:
+    speakers.append(speaker2id[spk])
+    emotions.append(emotion2id[emo])
+    lens = f0.shape[0]
+    if(lens > max_len):
+      f0 = f0[: max_len]
+      sp = sp[: max_len]
+      ap = ap[: max_len]
+      en = en[: max_len]
+      lens = max_len
+    lens_all.append(lens)
+
+    f0_ = np.zeros([max_len])
+    f0_[: lens] = f0
+    f0_all.append(f0_)
+
+    sp_ = np.zeros([max_len, sp.shape[1]])
+    sp_[: lens] = sp
+    sp_all.append(sp_)
+
+    ap_ = np.zeros([max_len, ap.shape[1]])
+    ap_[: lens] = ap
+    ap_all.append(ap_)
+
+    en_ = np.zeros([max_len])
+    en_[: lens] = en.flatten()
+    en_all.append(en_)
+
+  speakers = np.array(speakers)
+  emotions = np.array(emotions)
+  f0_all = np.array(f0_all)
+  sp_all = np.array(sp_all)
+  ap_all = np.array(ap_all)
+  en_all = np.array(en_all)
+  lens_all = np.array(lens_all)
+  if(DEBUG):
+    print("speakers shape: ", speakers.shape)
+    print("emotions shape: ", emotions.shape)
+    print("f0 shape: ", f0_all.shape)
+    print("sp shape: ", sp_all.shape)
+    print("ap shape: ", ap_all.shape)
+    print("energy shape: ", en_all.shape)
+    print("lens shape: ", lens_all.shape)
+  print("array building time: %.2f" % (time.time() - start_time))
+  return speakers, emotions, f0_all, sp_all, ap_all, en_all, lens_all
+
 def test():
   """Test the data utility functions"""
-  file_path = \
-  "/Users/Francis_Yao/Documents/Columbia/EmotionalSpeech/EPSaT/wav"
-  data = read_data(file_path)
-  (speaker2id, id2speaker, emotion2id, id2emotion, speaker_f0_stats,
-    normalizer) = statistics(data)
+  config = json.load(open("config.json"))
+  data = read_data(config["file_path"])
+  speaker2id, id2speaker, emotion2id, id2emotion, speaker_f0_stats,\
+    normalizer = statistics(data)
+  speakers, emotions, f0, sp, ap, en, lens = build_array(
+    data, speaker2id, emotion2id, config["max_len"], normalizer)
   return
